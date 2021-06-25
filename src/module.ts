@@ -4,11 +4,7 @@ import { DataFrame } from '@grafana/data';
 import $ from 'jquery';
 import './style.css';
 import angluar from 'angular';
-import { GoogleMap } from '@googlemaps/map-loader';
-//import * as path from 'path';
-//import * as fs from 'fs';
-//import { Loader, LoaderOptions } from 'google-maps';
-//import {} from 'google.maps';
+import { getLocationSrv } from '@grafana/runtime';
 
 interface KeyValue {
   key: string;
@@ -22,10 +18,11 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
   };
   map: any = null;
   marker: google.maps.Marker[] = [];
-  circle: any = null;
+  map_markers: { [key: string]: google.maps.Marker } = {};
+  marker_circle: { [key: string]: google.maps.Circle } = {};
+  selected_sensors: { [key: string]: string } = {};
   input: any = null;
   value: any = null;
-  marker_pos: any = null;
   fs: any = require('browserify-fs');
 
   // Simple example showing the last value of all data
@@ -46,10 +43,6 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     this.events.on('data-received', this.onDataReceived.bind(this));
 
     // Create a client instance: Broker, Port, Websocket Path, Client ID
-    console.log(this.templateSrv);
-    //this.map = (window as any).map;
-    console.log(this.map);
-    //console.log((window as any).L.map);
     angluar.module('grafana.directives').directive('stringToNumber', this.stringToNumber);
   }
 
@@ -70,69 +63,51 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     console.log('onDataError', err);
   }
 
-  initMap() {
-    var mapProp = {
-      center: new google.maps.LatLng(51.508742, -0.12085),
-      zoom: 5,
-    };
-    var map1 = new google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
-    console.log(map1);
-    return map1;
-  }
   onDataReceived(data) {
     console.log('onDataReceived');
+    // variables declaration
+    let colLat = -1;
+    let colLng = -1;
+    let colID = -1;
+    var bounds = new google.maps.LatLngBounds();
     var mapProp = {
       center: new google.maps.LatLng(40.464794, 17.721235),
       zoom: 8,
     };
+    // Find column tree_talker, lat & lon number
+    data[0].columns.forEach((c, i) => {
+      if (c.text === 'lat') {
+        colLat = i;
+      } else if (c.text === 'lng') {
+        colLng = i;
+      } else if (c.text === 'tree_talker') {
+        colID = i;
+      }
+    });
+    //console.log('cols = ' + colLat + '-' + colLng + '.');
+    // map setting
     if (this.map === null) {
-      console.log('sono nell if');
       this.map = new google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
     }
-    console.log(this.map);
-    var bounds = new google.maps.LatLngBounds();
     if (data.length > 0) {
       if (data[0].type === 'table') {
-        // this.DeleteMarkers();
-        console.log(this.marker.length);
-        if (this.circle !== null) {
-          this.circle.setMap(null);
-        }
-        if (data[0].rows.length > 1) {
-          if (this.marker.length > 0) {
-            //Loop through all the markers and remove
-            for (var i = 0; i < this.marker.length; i++) {
-              this.marker[i].setMap(null);
-            }
-            this.marker.length = 0;
-          }
-          let colLat = -1;
-          let colLng = -1;
-          let colID = -1;
-
-          // Find column tree_talker, lat & lon number
-          data[0].columns.forEach((c, i) => {
-            if (c.text === 'lat') {
-              colLat = i;
-            } else if (c.text === 'lng') {
-              colLng = i;
-            } else if (c.text === 'tree_talker') {
-              colID = i;
-            }
-          });
-          console.log('cols = ' + colLat + '-' + colLng + '.');
+        // marker circles resetting
+        this.DeleteCircles();
+        console.log(data[0].rows.length);
+        if (data[0].rows.length > 19) {
+          // markers resetting
+          this.DeleteMarkers();
+          this.DeleteSelectedSensors();
           if (colLat !== -1 && colLng !== -1) {
             let marker_id = '';
             let posLat = 0.0;
             let posLng = 0.0;
-            let i = 0;
             data[0].rows.forEach((r) => {
               marker_id = r[colID];
-              console.log(marker_id, i, data[0].rows[0][colID]);
+              console.log(marker_id);
               posLat = r[colLat];
               posLng = r[colLng];
-              //this.marker[i].setPosition({ lat: posLat, lng: posLng });
-              this.marker[i] = new google.maps.Marker({
+              this.map_markers[marker_id] = new google.maps.Marker({
                 position: { lat: posLat, lng: posLng },
                 optimized: false,
                 title: marker_id,
@@ -144,47 +119,93 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
                 },
                 map: this.map,
               });
-              bounds.extend(this.marker[i].getPosition()!);
-              i = i + 1;
-            });
-            this.map.fitBounds(bounds);
-          }
-        } else {
-          let colID = -1;
-          // Find column tree_talker
-          data[0].columns.forEach((c, i) => {
-            if (c.text === 'tree_talker') {
-              colID = i;
-            }
-          });
-          for (var j = 0; j < this.marker.length; j++) {
-            if (this.marker[j].getTitle() === data[0].rows[0][colID]) {
-              console.log(this.marker[j].getTitle());
               // Add circle overlay and bind to marker
-              this.circle = new google.maps.Circle({
+              this.marker_circle[marker_id] = new google.maps.Circle({
                 map: this.map,
                 radius: 5,
                 fillColor: 'yellow',
                 fillOpacity: 0.5,
                 strokeColor: 'yellow',
                 strokeOpacity: 10.0,
+                strokeWeight: 0,
+                visible: false,
               });
-              this.circle.bindTo('center', this.marker[j], 'position');
-            }
+              //Attach click event to the marker.
+              (function (marker, circle, selected_sensors) {
+                google.maps.event.addListener(marker, 'click', function (e) {
+                  //let selected_variables = {};
+                  if (circle.getVisible() === false) {
+                    circle.setVisible(true);
+                    circle.bindTo('center', marker, 'position');
+                    circle.setMap(this.map);
+                    selected_sensors[marker.getTitle()] = marker.getTitle();
+                  } else {
+                    circle.setVisible(false);
+                    circle.setMap(null);
+                    delete selected_sensors[marker.getTitle()];
+                  }
+                  console.log('values:');
+                  console.log(Object.values(selected_sensors));
+                  getLocationSrv().update({
+                    query: {
+                      'var-tt_serial_number': Object.values(selected_sensors),
+                    },
+                    partial: true,
+                    replace: true,
+                  });
+                  //console.log(this.templateSrv.getVariables());
+                });
+              })(this.map_markers[marker_id], this.marker_circle[marker_id], this.selected_sensors);
+              bounds.extend(this.map_markers[marker_id].getPosition()!);
+            });
+            this.map.fitBounds(bounds);
           }
+        } else {
+          let marker_id = '';
+          this.DeleteSelectedSensors();
+          data[0].rows.forEach((r) => {
+            marker_id = r[colID];
+            console.log(marker_id);
+            // set selected markers circle visibility equal to true
+            this.marker_circle[marker_id].setVisible(true);
+            this.marker_circle[marker_id].bindTo('center', this.map_markers[marker_id], 'position');
+            this.marker_circle[marker_id].setMap(this.map);
+            this.selected_sensors[marker_id] = marker_id;
+          });
+          console.log(Object.values(this.selected_sensors));
         }
       }
     }
-    //google.maps.event.trigger(this.map, 'resize');
   }
 
   DeleteMarkers() {
-    if (this.marker.length > 0) {
+    if (Object.keys(this.map_markers).length > 0) {
       //Loop through all the markers and remove
-      for (var i = 0; i < this.marker.length; i++) {
-        this.marker[i].setMap(null);
+      for (let key in this.map_markers) {
+        this.map_markers[key].setMap(null);
+        delete this.map_markers[key];
       }
-      this.marker = [];
+      console.log(Object.keys(this.map_markers).length);
+    }
+  }
+
+  DeleteCircles() {
+    if (Object.keys(this.marker_circle).length > 0) {
+      console.log('sono nel reset circle');
+      for (let key in this.marker_circle) {
+        console.log('keys:');
+        console.log(key);
+        this.marker_circle[key].setMap(null);
+        //delete this.marker_circle[key];
+      }
+    }
+  }
+
+  DeleteSelectedSensors() {
+    if (Object.keys(this.selected_sensors).length > 0) {
+      for (let key in this.selected_sensors) {
+        delete this.selected_sensors[key];
+      }
     }
   }
 
@@ -202,78 +223,6 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     }
 
     this.firstValues = values;
-  }
-  // async googleMapLoad(): Promise<google.maps.Map> {
-  //   console.log('googleMapLoad call');
-  //   var center = { lat: 40.464794, lng: 17.721235 };
-  //   //var pos = { lat: 40.34182588, lng: 17.70671345 };
-  //   const options: LoaderOptions = {
-  //     /* todo */
-  //   };
-  //   const loader = new Loader(this.panel.googleApiKey, options);
-  //   const google = await loader.load();
-  //   console.log(google);
-  //   const map = await new google.maps.Map(document.getElementById('map') as HTMLElement, {
-  //     center: center,
-  //     zoom: 8,
-  //   });
-  //   //for (let i = 0; i < 40; i++) {
-  //   //  this.marker[i] = new google.maps.Marker({
-  //   //    position: pos,
-  //   //    optimized: false,
-  //   //    title: 'title',
-  //   //    map: map,
-  //   //  });
-  //   //}
-  //   //const infowindow = new google.maps.InfoWindow({
-  //   //  content: 'ciao',
-  //   //});
-  //
-  //   //this.marker[10].addListener('click', () => {
-  //   //  infowindow.open(this.marker[10].get('map'), this.marker[10]);
-  //   //  console.log('press');
-  //   //});
-  //   //this.marker[10].on('mouseover', function onMouseOver() {
-  //   //  console.log('mouseover');
-  //   //});
-  //   console.log('ciao');
-  //   console.log(map);
-  //   return map;
-  // }
-
-  async loadMap() {
-    console.log('load');
-    /* Options for how the map should initially render. */
-    const mapOptions = {
-      center: {
-        lat: 40.464794,
-        lng: 17.721235,
-      },
-      zoom: 12,
-    };
-
-    /* Options for loading the Maps JS API. */
-    const apiOptions = {};
-
-    /*
-     * Set ID of the div where the map will be loaded,
-     * and whether to append to that div.
-     */
-    const mapLoaderOptions = {
-      apiKey: this.panel.googleApiKey,
-      divId: 'map',
-      mapOptions: mapOptions,
-      apiOptions: apiOptions,
-    };
-
-    // Instantiate map loader
-    const mapLoader = new GoogleMap();
-
-    // Load the map
-    const googleMap = mapLoader.initMap(mapLoaderOptions);
-    await googleMap;
-    console.log(googleMap);
-    return googleMap;
   }
 
   link(scope: any, elem: any, attrs: any, ctrl: any) {
@@ -298,7 +247,6 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
 
   connect() {
     console.log('Call connect');
-    //this.map = this.googleMapLoad();
   }
 }
 
