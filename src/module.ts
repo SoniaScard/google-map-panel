@@ -5,6 +5,7 @@ import $ from 'jquery';
 import './style.css';
 import angluar from 'angular';
 import { getLocationSrv } from '@grafana/runtime';
+import { Loader, LoaderOptions } from 'google-maps';
 
 interface KeyValue {
   key: string;
@@ -17,6 +18,7 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     googleApiKey: '',
   };
   map: any = null;
+  google: any = null;
   marker: google.maps.Marker[] = [];
   map_markers: { [key: string]: google.maps.Marker } = {};
   marker_circle: { [key: string]: google.maps.Circle } = {};
@@ -42,6 +44,8 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     this.events.on('data-error', this.onDataError.bind(this));
     this.events.on('data-received', this.onDataReceived.bind(this));
 
+    this.map = this.googleMapLoad();
+
     // Create a client instance: Broker, Port, Websocket Path, Client ID
     angluar.module('grafana.directives').directive('stringToNumber', this.stringToNumber);
   }
@@ -63,17 +67,53 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     console.log('onDataError', err);
   }
 
-  onDataReceived(data) {
+  async googleMapLoad(): Promise<google.maps.Map> {
+    console.log('googleMapLoad call');
+    const options: LoaderOptions = {
+      /* todo */
+    };
+    const loader = new Loader(this.panel.googleApiKey, options);
+    this.google = await loader.load();
+    var mapProp = {
+      center: new this.google.maps.LatLng(40.464794, 17.721235),
+      zoom: 8,
+    };
+    const map = new this.google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
+
+    return map;
+  }
+
+  resolveAfter2Seconds(x) {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        resolve(x);
+      }, 1500);
+    });
+  }
+
+  async onDataReceived(data) {
     console.log('onDataReceived');
+    console.log(this.map);
+    //while (this.map === null) {
+    //  Promise.resolve(this.map);
+    //  console.log('await');
+    //}
+    this.map = await this.resolveAfter2Seconds(this.map);
+    console.log(this.map);
     // variables declaration
     let colLat = -1;
     let colLng = -1;
     let colID = -1;
+    const google = this.google;
     var bounds = new google.maps.LatLngBounds();
     var mapProp = {
       center: new google.maps.LatLng(40.464794, 17.721235),
       zoom: 8,
     };
+    if (this.map === null) {
+      console.log('map is null');
+      this.map = new google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
+    }
     // Find column tree_talker, lat & lon number
     data[0].columns.forEach((c, i) => {
       if (c.text === 'lat') {
@@ -86,9 +126,11 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
     });
     //console.log('cols = ' + colLat + '-' + colLng + '.');
     // map setting
-    if (this.map === null) {
-      this.map = new google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
-    }
+    //console.log(this.map);
+    //if (this.map === null) {
+    //  console.log('map is null');
+    //  this.map = new google.maps.Map(document.getElementById('map') as HTMLElement, mapProp);
+    //}
     if (data.length > 0) {
       if (data[0].type === 'table') {
         // marker circles resetting
@@ -138,11 +180,14 @@ export default class GoogleMapPanelCtrl extends MetricsPanelCtrl {
                     circle.setVisible(true);
                     circle.bindTo('center', marker, 'position');
                     circle.setMap(this.map);
-                    selected_sensors[marker.getTitle()] = marker.getTitle();
+                    if (marker.getTitle() !== null && marker.getTitle() !== undefined) {
+                      //emp.name !== undefined ? emp.name : ''
+                      selected_sensors[marker.getTitle() as string] = marker.getTitle() as string;
+                    }
                   } else {
                     circle.setVisible(false);
                     circle.setMap(null);
-                    delete selected_sensors[marker.getTitle()];
+                    delete selected_sensors[marker.getTitle() as string];
                   }
                   console.log('values:');
                   console.log(Object.values(selected_sensors));
